@@ -1,0 +1,27 @@
+<package format="2">
+  <name>people_tracker_2d</name>
+  <version>0.1.0</version>
+  <description>people_tracker_2d</description>
+  <maintainer email="dmammolo@student.ethz.ch">Dario Mammolo</maintainer>
+
+  <license>GNU</license>
+
+  <author email="dmammolo@student.ethz.ch">Dario Mammolo</author>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>roscpp</depend>
+  <depend>roslib</depend>
+  <depend>tf</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>csm</depend>
+  <depend>cmake_modules</depend>
+  <build_depend>message_generation</build_depend>
+  <exec_depend>message_runtime</exec_depend>
+
+  <export>
+    <nodelet plugin="${prefix}/nodelet_plugins.xml" />
+  </export>
+</package>
