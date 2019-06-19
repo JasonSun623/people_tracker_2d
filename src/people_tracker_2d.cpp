@@ -112,7 +112,6 @@ StaticScanExtractor::StaticScanExtractor
   moving_objects_pub_ = nh_.advertise<nav_msgs::GridCells>("moving_objects", 1);
   static_objects_pub_ = nh_.advertise<nav_msgs::GridCells>("static_objects", 1);
   unknown_objects_pub_ = nh_.advertise<nav_msgs::GridCells>("unknown_objects", 1);
-  debug_scan_pub_ = nh_.advertise<nav_msgs::GridCells>("debug_scans", 1);
   dyn_obstacles_pub_ = nh_.advertise<costmap_converter::ObstacleArrayMsg>("dyn_obstacles", 1);
   vel_ellipse_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("velocity_ellipses", 1);
 

@@ -75,7 +75,6 @@ private:
   ros::Publisher moving_objects_pub_;
   ros::Publisher static_objects_pub_;
   ros::Publisher unknown_objects_pub_;
-  ros::Publisher debug_scan_pub_;
   ros::Publisher dyn_obstacles_pub_;
   ros::Publisher vel_ellipse_pub_;
 
