@@ -86,45 +86,6 @@ geometry_msgs::Point getMean(vector<geometry_msgs::Point> cluster){
   return mean;
 }
 
-void StaticScanExtractor::laserScanToLDP(sensor_msgs::LaserScan& scan_msg, LDP& ldp){
-  unsigned int n = scan_ranges_size_;
-  ldp = ld_alloc_new(n);
-
-  for (unsigned int i = 0; i < n; i++){
-    double r = scan_msg.ranges[i];
-
-    if (r > scan_range_min_ && r < 100){
-      ldp->valid[i] = 1;
-      ldp->readings[i] = r;
-    }
-    else if (r == 0){
-      ldp->valid[i] = 0;
-      ldp->readings[i] = 0;
-    }
-    else if (r <= scan_range_min_){
-      ldp->valid[i] = 0;
-      ldp->readings[i] = 0;
-    }
-    else{
-      ldp->valid[i] = 0;
-      ldp->readings[i] = -1;
-    }
-    ldp->theta[i] = scan_msg.angle_min + i * scan_angle_increment_;
-    ldp->cluster[i] = -1;
-  }
-
-  ldp->min_theta = ldp->theta[0];
-  ldp->max_theta = ldp->theta[n - 1];
-
-  ldp->odometry[0] = 0.0;
-  ldp->odometry[1] = 0.0;
-  ldp->odometry[2] = 0.0;
-
-  ldp->true_pose[0] = 0.0;
-  ldp->true_pose[1] = 0.0;
-  ldp->true_pose[2] = 0.0;
-}
-
 StaticScanExtractor::StaticScanExtractor
   (ros::NodeHandle nh, ros::NodeHandle nh_):nh_(nh), nh_private_(nh_)
 {
@@ -138,14 +99,10 @@ StaticScanExtractor::StaticScanExtractor
   // Subscriber
   nh_private_.param<std::string>("map_callback_topic", map_callback_topic_,
                                  "/map_for_static_scan_extractor");
-  nh_private_.param<std::string>("pose_callback_topic", pose_callback_topic_,
-                                 "/current_node_estimate");
   nh_private_.param<std::string>("scan_callback_topic", scan_callback_topic_,
                                  "/base_scan");
   map_sub_ = nh_.subscribe(map_callback_topic_, 1,
                            &StaticScanExtractor::mapCallback, this);
-  current_pose_sub_ = nh_.subscribe(pose_callback_topic_, 1,
-                           &StaticScanExtractor::poseCallback, this);
   scan_sub_ = nh_.subscribe(scan_callback_topic_, 5,
                             &StaticScanExtractor::scanCallback, this);
 
@@ -168,6 +125,7 @@ StaticScanExtractor::StaticScanExtractor
   // Initialize base to laser tf
   tf::StampedTransform base_to_laser_tf;
 
+  nh_private_.param<std::string>("map_frame", map_frame_, "/map");
   nh_private_.param<std::string>("base_frame", base_frame_, "/base_footprint");
   nh_private_.param<std::string>("laser_frame", laser_frame_, "/sick_laser_front");
 
@@ -194,45 +152,6 @@ StaticScanExtractor::StaticScanExtractor
 
   kalman_filter_ = KalmanFilter(std_dev_range_, std_dev_theta_, std_dev_process_);
 
-  /*
-  Init some sm_icp parameters (Most values are taken from the
-  ROS laser scan matcher package)
-  */
-  /*
-  Relative position from laser to robot (Here we set this to zero as
-  we consider this separately)
-  */
-  sm_icp_params_.laser[0] = 0.0;
-  sm_icp_params_.laser[1] = 0.0;
-  sm_icp_params_.laser[2] = 0.0;
-
-  sm_icp_params_.max_angular_correction_deg = 25.0;
-  sm_icp_params_.max_linear_correction = 0.3;
-  sm_icp_params_.max_iterations = 10;
-  sm_icp_params_.epsilon_xy = 0.000001;
-  sm_icp_params_.epsilon_theta = 0.000001;
-  sm_icp_params_.max_correspondence_dist = 0.5;
-  sm_icp_params_.use_corr_tricks = 1;
-  sm_icp_params_.restart = 0;
-  sm_icp_params_.restart_threshold_mean_error = 0.0357;
-  sm_icp_params_.restart_dt = 0.03;
-  sm_icp_params_.restart_dtheta = 0.1;
-  sm_icp_params_.outliers_maxPerc = 0.97;
-  sm_icp_params_.outliers_adaptive_order = 0.97;
-  sm_icp_params_.outliers_adaptive_mult = 2.0;
-  sm_icp_params_.outliers_remove_doubles = 1;
-  sm_icp_params_.clustering_threshold = 0.25;
-  sm_icp_params_.orientation_neighbourhood = 20;
-  sm_icp_params_.do_alpha_test = 0;
-  sm_icp_params_.do_alpha_test_thresholdDeg = 20.0;
-  sm_icp_params_.do_visibility_test = 0;
-  sm_icp_params_.use_point_to_line_distance = 1;
-  sm_icp_params_.use_ml_weights = 0;
-  sm_icp_params_.use_sigma_weights = 0;
-  sm_icp_params_.debug_verify_tricks = 0;
-  sm_icp_params_.sigma = 0.01;
-  sm_icp_params_.do_compute_covariance = 0;
-
   // Other params
   nh_private_.param<int>("init_scan_unknown_pt", init_scan_unknown_pt_, 100);
   nh_private_.param<int>("init_min_time", init_min_time_, 4);
@@ -251,7 +170,6 @@ StaticScanExtractor::StaticScanExtractor
   nh_private_.param<int>("min_velocity_count", min_velocity_count_, 8);
 
   // Init param, which is needed to check if ldp already initialised or not
-  first_ldp_ = true;
   current_pose_intialised_ = false;
 
   laser_diff_tf_ = xythetaToTF(0, 0, 0);
@@ -259,97 +177,20 @@ StaticScanExtractor::StaticScanExtractor
 
 StaticScanExtractor::~StaticScanExtractor(){}
 
-void StaticScanExtractor::initScan(sensor_msgs::LaserScan& laser_msg,
-                                   sensor_msgs::LaserScan& init_scan){
-  // Sum and sort scans
-  for (size_t i = 0; i < scan_ranges_size_; i++){
-    init_scan_sum_[i].push_back(laser_msg.ranges[i]);
-    sort(init_scan_sum_[i].begin(), init_scan_sum_[i].end());
-  }
-
-  // If passed time is higher than init_min_time_
-  ros::Time end_time = ros::Time::now();
-  double diff_time = (end_time - begin_time_).toSec();
-  if (diff_time > init_min_time_){
-    int count_unknown = 0;
-    double temp_median;
-    size_t scan_sum_size = init_scan_sum_[0].size();
-    for (size_t j = 0; j < scan_ranges_size_; j++){
-      // Calculate Medians
-      if (scan_sum_size % 2 == 0){
-        temp_median = (init_scan_sum_[j][(scan_sum_size / 2) - 1] +
-                       init_scan_sum_[j][(scan_sum_size / 2)]) / 2;
-      }
-      else {
-        temp_median = init_scan_sum_[j][(scan_sum_size - 1) / 2];
-      }
-
-      /// Calculate means
-      // Init count and sum var for mean computation
-      int count = 0;
-      double sum = 0;
-      // TODO: var for 0.02
-      for (size_t k = 0; k < scan_sum_size; k++){
-        if (abs(temp_median - init_scan_sum_[j][k]) < 0.02){
-          sum += init_scan_sum_[j][k];
-          count += 1;
-        }
-      }
-      // Compute mean if more than 50% of all values are in range
-      if (count > scan_sum_size * 0.5){
-        init_scan.ranges[j] = sum / double(count);
-      }
-      else {
-        init_scan.ranges[j] = 0;
-        count_unknown += 1;
-      }
-    }
-
-    // Publish init scan if enough scan points available
-    if (count_unknown < init_scan_unknown_pt_){
-      static_scan_pub_.publish(init_scan);
-      initialised_first_scan_ = true;
-      ROS_INFO("Scan initialised!");
-    }
-  }
-}
-
-void StaticScanExtractor::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg){
-  current_pose_ = *pose_msg;
-  current_pose_intialised_ = true;
-}
-
 void StaticScanExtractor::scanCallback
      (const sensor_msgs::LaserScan::ConstPtr& scan_msg){
-  // Call latest pose estimate
-  if (initialised_first_scan_ && current_pose_intialised_){
-    if (first_ldp_) current_pose_stamp_ = current_pose_.header.stamp;
-    // Check that they have the same stamp
-    if (current_pose_.header.stamp > current_pose_stamp_ || first_ldp_){
-      tf::poseStampedMsgToTF(current_pose_, current_pose_tf_);
-      current_pose_stamp_ = current_pose_.header.stamp;
-
-      if (!first_ldp_){
-        // Free memory for avoiding memory leaking
-        ld_free(prev_node_ldp_);
-      }
-      else first_ldp_ = false;
-
-      // Find static scan corresponding to time stamp
-      while(current_pose_stamp_ != static_scan_queue_.front().header.stamp){
-        static_scan_queue_.pop();
-      }
-
-      // Save previous static_scan as LDP
-      laserScanToLDP(static_scan_queue_.front(), prev_node_ldp_);
-      prev_node_ldp_->estimate[0] = 0.0;
-      prev_node_ldp_->estimate[1] = 0.0;
-      prev_node_ldp_->estimate[2] = 0.0;
-
-      // Reset first laser tf guess
-      laser_diff_tf_ = xythetaToTF(0, 0, 0);
-    }
+  tf::StampedTransform current_pose_tf;
+  bool got_transform;
+  try {
+    got_transform = base_to_laser_listener_.waitForTransform(map_frame_,
+                     base_frame_, ros::Time(0), ros::Duration(1.0));
+    base_to_laser_listener_.lookupTransform(map_frame_, base_frame_,
+                                          ros::Time(0), current_pose_tf);
   }
+  catch (tf::TransformException ex){
+    ROS_WARN("Could not get initial transform from base to laser frame, %s", ex.what());
+  }
+  current_pose_tf_ = current_pose_tf;
 
   // Save laser msg
   static_scan_ = *scan_msg;
@@ -363,51 +204,15 @@ void StaticScanExtractor::scanCallback
     scan_range_max_ = static_scan_.range_max;
     scan_angle_min_ = static_scan_.angle_min;
 
-    // Init sm icp params
-    sm_icp_params_.min_reading = scan_range_min_;
-    sm_icp_params_.max_reading = scan_range_max_;
-
-    // Check if init_scan_sum_ not initialised yet
-    if (init_scan_sum_.empty()) init_scan_sum_.resize(scan_ranges_size_);
-
-    // Init previous node stamp variable for later kf matrices update
     prev_node_stamp_ = static_scan_.header.stamp;
-
-    // Init init_scan
-    init_scan_ = static_scan_;
-    initScan(static_scan_, init_scan_);
-    static_scan_ = init_scan_;
-    static_scan_queue_.push(static_scan_);
+    initialised_first_scan_ = true;
   }
   else {
-    if (!current_pose_intialised_) return;
     // If map callback not initialised return
     if (map_callback_initialised_ == false) return;
 
-    // Transform current scan to LDP
-    laserScanToLDP(static_scan_, current_ldp_);
-    current_ldp_->estimate[0] = 0.0;
-    current_ldp_->estimate[1] = 0.0;
-    current_ldp_->estimate[2] = 0.0;
-
-    // Do scan matching of current and previous node scan
-    sm_icp_params_.laser_ref = prev_node_ldp_;
-    sm_icp_params_.laser_sens = current_ldp_;
-    sm_icp_params_.first_guess[0] = laser_diff_tf_.getOrigin().getX();
-    sm_icp_params_.first_guess[1] = laser_diff_tf_.getOrigin().getY();
-    sm_icp_params_.first_guess[2] = tf::getYaw(laser_diff_tf_.getRotation());
-
-    sm_icp(&sm_icp_params_, &sm_icp_result_);
-
-    // Get result as tf
-    laser_diff_tf_ = xythetaToTF(sm_icp_result_.x[0],
-                                 sm_icp_result_.x[1],
-                                 sm_icp_result_.x[2]);
-
     // Transform to base_link frame and get map to latest laser tf
-    tf::Transform pose_diff_tf = base_to_laser_ * laser_diff_tf_ * laser_to_base_;
-    map_to_latest_tf_ = current_pose_tf_ * pose_diff_tf;
-    map_to_latest_laser_tf_ = map_to_latest_tf_ * base_to_laser_;
+    map_to_latest_laser_tf_ = current_pose_tf_ * base_to_laser_;
 
     // Check each scan point if it is a wall from static occupancy map
     double theta = scan_angle_min_;
@@ -937,12 +742,6 @@ void StaticScanExtractor::scanCallback
     // Publish dynamic and static scan
     static_scan_pub_.publish(static_scan_);
     dynamic_scan_pub_.publish(dynamic_scan_);
-
-    // Fill static_scan_queue_
-    static_scan_queue_.push(static_scan_);
-
-    // Free memory for avoiding memory leaking
-    ld_free(current_ldp_);
   }
 }
 

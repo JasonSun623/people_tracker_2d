@@ -28,11 +28,6 @@
 #include <tf/transform_datatypes.h>
 #include <Eigen/Dense>
 
-#include <csm/csm_all.h>
-#undef min
-#undef max
-
-
 class StaticScanExtractor{
 public:
   /**
@@ -44,25 +39,6 @@ public:
    *  Class Destructor
    */
   ~StaticScanExtractor();
-
-  /**
-   *  Transforms laser scans to the LDP data form, which is needed for scan
-   *  matching with csm.
-   */
-  void laserScanToLDP(sensor_msgs::LaserScan& scan_msg, LDP& ldp);
-
-  /**
-   *  The initialisation function for generating the first static scan for the
-   *  SLAM framework. It is summing up laser scans over time and choses the
-   *  scans which are most probable to be static.
-   */
-  void initScan(sensor_msgs::LaserScan& laser_msg,
-                sensor_msgs::LaserScan& init_scan);
-
-  /**
-   *  ....
-   */
-  void poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg);
 
   /**
    *  The main function which recives the raw laser scan and publishes then the
@@ -93,7 +69,6 @@ private:
   // Publisher, Subscriber
   ros::Subscriber map_sub_;
   ros::Subscriber scan_sub_;
-  ros::Subscriber current_pose_sub_;
 
   ros::Publisher static_scan_pub_;
   ros::Publisher dynamic_scan_pub_;
@@ -112,23 +87,18 @@ private:
   nav_msgs::Odometry odom_msg_;
   nav_msgs::OccupancyGrid map_msg_;
 
-  // CSM
-  sm_params sm_icp_params_;
-  sm_result sm_icp_result_;
-  LDP prev_node_ldp_;
-  LDP current_ldp_;
+  // scan
   unsigned int scan_ranges_size_;
   double scan_angle_increment_;
   double scan_range_min_;
   double scan_range_max_;
   double scan_angle_min_;
-  bool first_ldp_;
 
   // TF
   tf::TransformListener base_to_laser_listener_;
   tf::Transform base_to_laser_;
   tf::Transform laser_to_base_;
-  tf::Stamped<tf::Transform> current_pose_tf_;
+  tf::Transform current_pose_tf_;
   tf::Transform map_to_latest_tf_;
   tf::Transform map_to_latest_laser_tf_;
   tf::Transform laser_diff_tf_;
@@ -163,8 +133,8 @@ private:
   std::vector<TrackedObject> tracked_objects_;
   KalmanFilter kalman_filter_;
   std::string map_callback_topic_;
-  std::string pose_callback_topic_;
   std::string scan_callback_topic_;
+  std::string map_frame_;
   std::string base_frame_;
   std::string laser_frame_;
   int init_scan_unknown_pt_;
